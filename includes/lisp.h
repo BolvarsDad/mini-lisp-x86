@@ -1,0 +1,10 @@
+#ifndef MINI_LISP_X86_INCLUDES_LISP_H_
+#define MINI_LISP_X86_INCLUDES_LISP_H_
+
+enum LISP_TOKENS {
+    TOK_INT,
+    TOK_CELL,
+    TOK_END
+};
+
+#endif
