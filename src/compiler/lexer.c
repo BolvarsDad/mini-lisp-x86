@@ -16,18 +16,27 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. 
 */
 
-enum toktype {
-    TOK_LPAREN,     // '('
-    TOK_RPAREN,     // ')'
-    TOK_SYMBOL,     // foo bar
-    TOK_INT,        // -2, -1, 0, 1, 2, 3, ...
-    TOK_QUOTE,      // '`'`'
-    TOK_DOT,        // '.'
-    TOK_EOF,
-    TOK_ERR
+#include "lexer.h"
+
+#define MAX_TOKS 1024
+
+struct token {
+    char           *lexeme;
+    int             line;
+    int             column;
+    enum toktype    type;
 };
 
-struct Token {
-    toktype type;
-
+struct token tok_info_map[] = {
+    {TOK_LPAREN, "TOK_LPAREN", "("},
+    {TOK_RPAREN, "TOK_RPAREN", ")"},
+    {TOK_DOT,    "TOK_DOT",    "."},
+    {TOK_SYMBOL, "TOK_SYMBOL", NULL},
+    {TOK_STRING, "TOK_STRING", NULL},
+    {TOK_NUMBER, "TOK_NUMBER", NULL}
 };
+
+struct token *
+lex(char const *src)
+{
+}
