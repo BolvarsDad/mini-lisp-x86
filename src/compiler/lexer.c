@@ -16,27 +16,149 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. 
 */
 
+#include <stddef.h>
+#include <stdio.h>
+#include <ctype.h>
+#include <string.h>
+
 #include "lexer.h"
 
 #define MAX_TOKS 1024
 
-struct token {
-    char           *lexeme;
-    int             line;
-    int             column;
-    enum toktype    type;
-};
-
-struct token tok_info_map[] = {
-    {TOK_LPAREN, "TOK_LPAREN", "("},
-    {TOK_RPAREN, "TOK_RPAREN", ")"},
-    {TOK_DOT,    "TOK_DOT",    "."},
-    {TOK_SYMBOL, "TOK_SYMBOL", NULL},
-    {TOK_STRING, "TOK_STRING", NULL},
-    {TOK_NUMBER, "TOK_NUMBER", NULL}
-};
-
-struct token *
-lex(char const *src)
+char const *
+token_to_str(enum toktype type)
 {
+    switch(type) {
+        case TOK_END:
+            return "End of content";
+        case TOK_INVALID:
+            return "Invalid token";
+        case TOK_LPAREN:
+            return "'('";
+        case TOK_RPAREN:
+            return "')'";
+        case TOK_SYMBOL:
+            return "'Symbol'";
+        case TOK_KEYWORD:
+            return "'Keyword'";
+        case TOK_STRING:
+            return "'String'";
+        case TOK_INTEGER:
+            return "'Integer'";
+        case TOK_OPERATOR:
+            return "'Operator'";
+        default:
+            return NULL;
+    }
+    return NULL;
+}
+
+struct lexer
+lexer_create(char const *src, size_t srclen)
+{
+    struct lexer l;
+
+    l.content   = src;
+    l.len       = strlen(src);
+    l.cursor    = 0;
+
+    return l;
+}
+
+struct token
+lexer_next(struct lexer *l)
+{
+    struct token t;
+
+    t.lexeme = NULL;
+    t.len = 0;
+    t.type = TOK_INVALID;
+
+    if (l->cursor >= l->len) {
+        t.type = TOK_END;
+        return t; 
+    }
+
+    while (isspace(l->content[l->cursor]))
+        l->cursor++;
+
+    if (l->content[l->cursor] == '\0') {
+        t.type = TOK_END;
+        return t;
+    }
+
+    if (l->content[l->cursor] == '(') {
+        t.type = TOK_LPAREN;
+        t.lexeme = &l->content[l->cursor];
+        t.len = 1;
+
+        l->cursor++;
+
+        return t;
+    }
+
+    if (l->content[l->cursor] == ')') {
+        t.type = TOK_RPAREN;
+        t.lexeme = &l->content[l->cursor];
+        t.len = 1;
+
+        l->cursor++;
+
+        return t;
+    }
+
+    if (l->content[l->cursor] == '"') {
+        l->cursor++;
+        size_t start = l->cursor;
+
+        while (l->cursor < l->len && l->content[l->cursor] != '"' && l->content[l->cursor] != '\0')
+            l->cursor++;
+
+        if (l->content[l->cursor] == '"') {
+            t.type = TOK_STRING;
+            t.lexeme = &l->content[start];
+            t.len = l->cursor - start;
+            l->cursor++; // skip closing quote
+        } else {
+            t.type = TOK_INVALID;
+        }
+
+        return t;
+    }
+
+    if (isalpha(l->content[l->cursor]) || strchr("+-*/<>=?!", l->content[l->cursor])) {
+        size_t start = l->cursor;
+
+        while (isalnum(l->content[l->cursor]) || strchr("+-*/<>=?!_", l->content[l->cursor])) {
+            l->cursor++;
+        }
+
+        t.type = TOK_SYMBOL;
+        t.lexeme = &l->content[start];
+        t.len = l->cursor - start;
+
+        return t;
+    }
+
+    t.type = TOK_INVALID;
+    t.lexeme = &l->content[l->cursor];
+    t.len = 1;
+
+    l->cursor++;
+
+    return t;
+}
+
+void
+tokenize(char const *line, size_t len)
+{
+    struct lexer l;
+    struct token t;
+
+    l = lexer_create(line, len);
+
+    while ((t = lexer_next(&l)).type != TOK_END) {
+        printf("Token: %-10s | ", token_to_str(t.type));
+        printf("Lexeme: %.*s\n", (int)t.len, t.lexeme);
+    }
 }

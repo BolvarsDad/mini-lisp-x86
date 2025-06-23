@@ -1,3 +1,6 @@
+/* Library functions written by Braden Best */
+/* https://gitlab.com/bradenbest/bradenlib/ */
+
 #ifndef MINI_LISP_X86_INCLUDES_GET_LINE_H_
 #define MINI_LIST_X86_INCLUDES_GET_LINE_H_ 1000004L
 
