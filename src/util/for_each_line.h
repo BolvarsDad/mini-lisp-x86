@@ -48,10 +48,11 @@
  *     `for_each_line_implementation` and all functions based on it
  *     return 1 if there is "more file" to read or 0 if there was an EOF,
  *     error or file is null.
- *
- * Example:
- *     see tfor_each_line.c for an example
  */
+
+// DISCLAIMER: Library functions not written by me. They were written by a friend of mine.
+// https://gitlab.com/bradenbest/bradenlib/
+
 #ifndef MINI_LISP_X86_UTIL_FOR_EACH_LINE_H_
 #define MINI_LISP_X86_UTIL_FOR_EACH_LINE_H_ 1000002L
 
@@ -145,5 +146,5 @@ for_each_line_greedy(char *buffer, size_t bufsz, FILE *file, for_each_line_fn fn
     return for_each_line_implementation(buffer, bufsz, file, fn, FOR_EACH_LINE_FLAG_NONE);
 }
 
-#endif /* BRADENLIB_FOR_EACH_LINE_H */
+#endif
 
