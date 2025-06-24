@@ -158,6 +158,10 @@ lexer_next(struct lexer *l)
 
         while (isdigit(l->content[l->cursor])) {
             l->cursor++;
+
+            if (strchr("./", l->content[l->cursor])) {
+                l->cursor++;
+            }
         }
 
         t.type = TOK_NUMERIC;
