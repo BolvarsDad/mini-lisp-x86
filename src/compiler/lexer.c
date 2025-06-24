@@ -34,19 +34,19 @@ token_to_str(enum toktype type)
         case TOK_INVALID:
             return "Invalid token";
         case TOK_LPAREN:
-            return "'('";
+            return "(";
         case TOK_RPAREN:
             return "')'";
         case TOK_SYMBOL:
-            return "'Symbol'";
+            return "Symbol";
         case TOK_KEYWORD:
-            return "'Keyword'";
+            return "Keyword";
         case TOK_STRING:
-            return "'String'";
-        case TOK_INTEGER:
-            return "'Integer'";
+            return "String";
+        case TOK_NUMERIC:
+            return "Numeric";
         case TOK_OPERATOR:
-            return "'Operator'";
+            return "Operator";
         default:
             return NULL;
     }
@@ -138,10 +138,10 @@ lexer_next(struct lexer *l)
         return t;
     }
 
-    if (isalpha(l->content[l->cursor]) || strchr("+-*/<>=?!", l->content[l->cursor])) {
+    if (isalpha(l->content[l->cursor])) {
         size_t start = l->cursor;
 
-        while (isalnum(l->content[l->cursor]) || strchr("+-*/<>=?!_", l->content[l->cursor])) {
+        while (isalnum(l->content[l->cursor])) {
             l->cursor++;
         }
 
@@ -152,7 +152,21 @@ lexer_next(struct lexer *l)
         return t;
     }
 
-    if (isdigit(l->content[l->cursor]))
+    
+    if (isdigit(l->content[l->cursor])) {
+        size_t start = l->cursor;
+
+        while (isdigit(l->content[l->cursor])) {
+            l->cursor++;
+        }
+
+        t.type = TOK_NUMERIC;
+        t.lexeme = &l->content[start];
+        t.len = l->cursor - start;
+
+        return t;
+    }
+    
 
     t.type = TOK_INVALID;
     t.lexeme = &l->content[l->cursor];
