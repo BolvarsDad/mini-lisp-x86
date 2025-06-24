@@ -82,14 +82,16 @@ lexer_next(struct lexer *l)
     while (isspace(l->content[l->cursor]))
         l->cursor++;
 
-    if (l->content[l->cursor] == '\0') {
+    char c = l->content[l->cursor];
+
+    if (c == '\0') {
         t.type = TOK_END;
         return t;
     }
 
-    if (l->content[l->cursor] == '(') {
+    if (c == '(') {
         t.type = TOK_LPAREN;
-        t.lexeme = &l->content[l->cursor];
+        t.lexeme = &c;
         t.len = 1;
 
         l->cursor++;
@@ -97,9 +99,9 @@ lexer_next(struct lexer *l)
         return t;
     }
 
-    if (l->content[l->cursor] == ')') {
+    if (c == ')') {
         t.type = TOK_RPAREN;
-        t.lexeme = &l->content[l->cursor];
+        t.lexeme = &c;
         t.len = 1;
 
         l->cursor++;
@@ -107,14 +109,14 @@ lexer_next(struct lexer *l)
         return t;
     }
 
-    if (l->content[l->cursor] == '"') {
+    if (c == '"') {
         l->cursor++;
         size_t start = l->cursor;
 
-        while (l->cursor < l->len && l->content[l->cursor] != '"' && l->content[l->cursor] != '\0')
+        while (l->cursor < l->len && c != '"' && c != '\0')
             l->cursor++;
 
-        if (l->content[l->cursor] == '"') {
+        if (c == '"') {
             t.type = TOK_STRING;
             t.lexeme = &l->content[start];
             t.len = l->cursor - start;
@@ -128,10 +130,10 @@ lexer_next(struct lexer *l)
         return t;
     }
 
-    if (isalpha(l->content[l->cursor]) || strchr("+-*/<>=?!", l->content[l->cursor])) {
+    if (isalpha(c) || strchr("+-*/<>=?!", c)) {
         size_t start = l->cursor;
 
-        while (isalnum(l->content[l->cursor]) || strchr("+-*/<>=?!_", l->content[l->cursor])) {
+        while (isalnum(c) || strchr("+-*/<>=?!_", c)) {
             l->cursor++;
         }
 
@@ -143,7 +145,7 @@ lexer_next(struct lexer *l)
     }
 
     t.type = TOK_INVALID;
-    t.lexeme = &l->content[l->cursor];
+    t.lexeme = &c;
     t.len = 1;
 
     l->cursor++;

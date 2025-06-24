@@ -14,7 +14,10 @@ enum toktype {
     TOK_SYMBOL,     // e.g. variable names
     TOK_KEYWORD,    // e.g. 'format'
     TOK_STRING,
+    TOK_IDENTIFIER,
     TOK_INTEGER,
+    TOK_FLOAT,
+    TOK_FRACTION,
     TOK_OPERATOR
 };
 

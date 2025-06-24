@@ -14,12 +14,6 @@ usage(char *progname)
     exit(1);
 }
 
-void
-print_line(char const *line, size_t len)
-{
-    printf("%.*s\n", (int)len, line);
-}
-
 int
 main(int argc, char **argv)
 {

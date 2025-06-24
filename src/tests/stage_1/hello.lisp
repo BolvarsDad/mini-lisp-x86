@@ -1,1 +1,1 @@
-(format t "hello world!")
+(format t foo bar "hello world!")
