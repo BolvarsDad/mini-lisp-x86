@@ -28,6 +28,7 @@ main(int argc, char **argv)
 
     char buffer[BUFSZ];
 
+    // see for_each_line.h in src/util
     while (for_each_line(buffer, BUFSZ, fp, tokenize))
         ;
 

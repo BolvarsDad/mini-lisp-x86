@@ -23,7 +23,35 @@
 
 #include "lexer.h"
 
-#define MAX_TOKS 1024
+#define MAX_TOKS 256
+#define LUTSZ 256
+
+static struct token (*token_handlers[256])(struct lexer *) = {0};
+
+void
+init_token_handlers()
+{
+    token_handlers['('] = lex_paren;
+    token_handlers[')'] = lex_paren;
+
+    token_handlers['"'] = lex_string;
+
+    token_handlers['+'] = lex_operator;
+    token_handlers['-'] = lex_operator;
+    token_handlers['*'] = lex_operator;
+    token_handlers['/'] = lex_operator;
+
+    token_handlers['#'] = lex_macro;
+    token_handlers[':'] = lex_keyword;
+    token_handlers[';'] = lex_comment;
+
+    for (int i = '0'; i <= '9'; ++i)
+        token_handlers[i] = lex_numeric;
+
+    for (int i = 0; i < LUTSZ; ++i)
+        if (token_handlers[i] == NULL)
+            token_handlers[i] = lex_symbol;
+}
 
 char const *
 token_to_str(enum toktype type)
@@ -36,7 +64,7 @@ token_to_str(enum toktype type)
         case TOK_LPAREN:
             return "(";
         case TOK_RPAREN:
-            return "')'";
+            return ")";
         case TOK_SYMBOL:
             return "Symbol";
         case TOK_KEYWORD:
@@ -47,6 +75,8 @@ token_to_str(enum toktype type)
             return "Numeric";
         case TOK_OPERATOR:
             return "Operator";
+        case TOK_MACRO:
+            return "Macro";
         default:
             return NULL;
     }
@@ -66,6 +96,148 @@ lexer_create(char const *src, size_t srclen)
 }
 
 struct token
+lex_paren(struct lexer *l)
+{
+    struct token t;
+
+    t.lexeme = &l->content[l->cursor];
+    t.len    = 1;
+    t.type   = (l->content[l->cursor] == '(') ? TOK_LPAREN : TOK_RPAREN;
+
+    l->cursor++;
+
+    return t;
+}
+
+struct token
+lex_string(struct lexer *l)
+{
+    struct token t;
+    size_t start = ++l->cursor;
+
+    while (l->cursor < l->len && l->content[l->cursor] != '"')
+        l->cursor++;
+
+    t.lexeme    = &l->content[start];
+    t.len       = l->cursor - start;
+    t.type      = TOK_STRING;
+
+    l->cursor++;
+
+    return t;
+}
+
+struct token
+lex_operator(struct lexer *l)
+{
+    struct token t;
+    
+    t.lexeme    = &l->content[l->cursor];
+    t.len       = 1;
+    t.type      = TOK_OPERATOR;
+
+    l->cursor++;
+
+    return t;
+}
+
+struct token
+lex_numeric(struct lexer *l)
+{
+    struct token t;
+    size_t start = l->cursor;
+
+    while (isdigit(l->content[l->cursor]) || strchr("./", l->content[l->cursor]))
+        l->cursor++;
+
+    t.lexeme    = &l->content[start];
+    t.len       = l->cursor - start;
+    t.type      = TOK_NUMERIC;
+
+    return t;
+}
+
+struct token
+lex_macro(struct lexer *l)
+{
+    struct token t;
+    size_t start = l->cursor;
+
+    while (l->content[l->cursor] != '\n')
+        l->cursor++;
+
+    t.lexeme    = &l->content[start];
+    t.len       = l->cursor - start;
+    t.type      = TOK_MACRO;
+
+    return t;
+}
+
+struct token
+lex_keyword(struct lexer *l)
+{
+    struct token t;
+    size_t start = l->cursor;
+
+    while(l->cursor < l->len && l->content[l->cursor] != ' ')
+        l->cursor++;
+
+    t.lexeme    = &l->content[start];
+    t.len       = l->cursor - start;
+    t.type      = TOK_KEYWORD;
+
+    return t;
+}
+
+struct token
+lex_comment(struct lexer *l)
+{
+    struct token t;
+    size_t start = l->cursor;
+
+    // does not yet support multi-line comments
+    while (l->cursor <= l->len && l->content[l->cursor] != '\n')
+        l->cursor++;
+
+    t.lexeme = &l->content[start];
+    t.len = l->cursor - start;
+    t.type = TOK_COMMENT;
+
+    return t;
+}
+
+struct token
+lex_symbol(struct lexer *l)
+{
+    struct token t;
+    size_t start = l->cursor;
+
+    while (l->cursor < l->len && is_symbol_char(l->content[l->cursor]))
+        l->cursor++;
+
+    t.lexeme = &l->content[start];
+    t.len = l->cursor - start;
+    t.type = TOK_SYMBOL;
+
+    return t;
+}
+
+int
+is_symbol_char(char c)
+{
+    return isalnum(c) || strchr("-_+*/:<=>!?&~^", c);
+}
+
+char
+lexer_peek(struct lexer *l)
+{
+    if (l->cursor == l->len)
+        return '\0';
+
+    return l->content[l->cursor + 1];
+}
+
+struct token
 lexer_next(struct lexer *l)
 {
     struct token t;
@@ -74,111 +246,20 @@ lexer_next(struct lexer *l)
     t.len = 0;
     t.type = TOK_INVALID;
 
+    while (l->cursor < l->len && isspace(l->content[l->cursor]))
+        l->cursor++;
+
     if (l->cursor >= l->len) {
-        t.type = TOK_END;
-        return t; 
-    }
-
-    while (isspace(l->content[l->cursor]))
-        l->cursor++;
-
-    if (l->content[l->cursor]== '\0') {
-        t.type = TOK_END;
-        return t;
-    }
-
-    if (l->content[l->cursor]== '(') {
-        t.type = TOK_LPAREN;
-        t.lexeme = &l->content[l->cursor];
-        t.len = 1;
-
-        l->cursor++;
+        t.lexeme = NULL;
+        t.len    = 0;
+        t.type   = TOK_END;
 
         return t;
     }
 
-    if (l->content[l->cursor]== ')') {
-        t.type = TOK_RPAREN;
-        t.lexeme = &l->content[l->cursor];
-        t.len = 1;
+    char c = l->content[l->cursor];
 
-        l->cursor++;
-
-        return t;
-    }
-
-    if (l->content[l->cursor]== '"') {
-        l->cursor++;
-        size_t start = l->cursor;
-
-        while (l->cursor < l->len && l->content[l->cursor]!= '"' && l->content[l->cursor]!= '\0')
-            l->cursor++;
-
-        if (l->content[l->cursor]== '"') {
-            t.type = TOK_STRING;
-            t.lexeme = &l->content[start];
-            t.len = l->cursor - start;
-
-            l->cursor++;
-        }
-
-        else
-            t.type = TOK_INVALID;
-
-        return t;
-    }
-
-    if (strchr("+./*", l->content[l->cursor]) && l->content[l->cursor + 1] == ' ') {
-        t.type = TOK_OPERATOR;
-        t.lexeme = &l->content[l->cursor];
-        t.len = 1;
-
-        l->cursor++;
-
-        return t;
-    }
-
-    if (isalpha(l->content[l->cursor])) {
-        size_t start = l->cursor;
-
-        while (isalnum(l->content[l->cursor])) {
-            l->cursor++;
-        }
-
-        t.type = TOK_IDENTIFIER;
-        t.lexeme = &l->content[start];
-        t.len = l->cursor - start;
-
-        return t;
-    }
-
-    
-    if (isdigit(l->content[l->cursor])) {
-        size_t start = l->cursor;
-
-        while (isdigit(l->content[l->cursor])) {
-            l->cursor++;
-
-            if (strchr("./", l->content[l->cursor])) {
-                l->cursor++;
-            }
-        }
-
-        t.type = TOK_NUMERIC;
-        t.lexeme = &l->content[start];
-        t.len = l->cursor - start;
-
-        return t;
-    }
-    
-
-    t.type = TOK_INVALID;
-    t.lexeme = &l->content[l->cursor];
-    t.len = 1;
-
-    l->cursor++;
-
-    return t;
+    return token_handlers[(unsigned char)c](l);
 }
 
 void
@@ -188,6 +269,7 @@ tokenize(char const *line, size_t len)
     struct token t;
 
     l = lexer_create(line, len);
+    init_token_handlers();
 
     while ((t = lexer_next(&l)).type != TOK_END) {
         printf("Token: %-10s | ", token_to_str(t.type));
