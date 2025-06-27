@@ -10,12 +10,11 @@ Currently in early development — supports lexing parentheses, symbols, strings
   - Symbols (e.g., `format`, `t`)
   - Strings (`"hello world"`)
   - Operators: `+`, `-`, `*`, `/`, `.`
+  - Numbers: `45`, `12.2`, `-81`
+  - Comments: `; like this`
+  - Keywords: `:example`
 - Line-based input reading
-
-## TBI:
-- Comments
-- Functions
-- Numbers (Integers, floats, and fractions)
+- Uses a Dispatch Table for lexical analysis.
 ---
 
 ### Requirements
