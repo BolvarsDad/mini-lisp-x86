@@ -14,6 +14,10 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. 
+
+    File: lexer.c
+    Purpose: Lexical analysis of input program for tokenization. Tokens will then
+    be passed to parser.c for construction of AST.
 */
 
 #include <stddef.h>
@@ -24,9 +28,9 @@
 #include "lexer.h"
 
 #define MAX_TOKS 256
-#define LUTSZ 256
+#define LUTSZ 128
 
-static struct token (*token_handlers[256])(struct lexer *) = {0};
+static struct token (*token_handlers[LUTSZ])(struct lexer *) = {0};
 
 void
 init_token_handlers()
@@ -36,10 +40,10 @@ init_token_handlers()
 
     token_handlers['"'] = lex_string;
 
-    token_handlers['+'] = lex_operator;
-    token_handlers['-'] = lex_operator;
-    token_handlers['*'] = lex_operator;
-    token_handlers['/'] = lex_operator;
+    token_handlers['+'] = lex_function;
+    token_handlers['-'] = lex_function;
+    token_handlers['*'] = lex_function;
+    token_handlers['/'] = lex_function;
 
     token_handlers['#'] = lex_macro;
     token_handlers[':'] = lex_keyword;
@@ -73,10 +77,12 @@ token_to_str(enum toktype type)
             return "String";
         case TOK_NUMERIC:
             return "Numeric";
-        case TOK_OPERATOR:
-            return "Operator";
+        case TOK_FUNCTION:
+            return "Function";
         case TOK_MACRO:
             return "Macro";
+        case TOK_COMMENT:
+            return "Comment";
         default:
             return NULL;
     }
@@ -128,13 +134,13 @@ lex_string(struct lexer *l)
 }
 
 struct token
-lex_operator(struct lexer *l)
+lex_function(struct lexer *l)
 {
     struct token t;
     
     t.lexeme    = &l->content[l->cursor];
     t.len       = 1;
-    t.type      = TOK_OPERATOR;
+    t.type      = TOK_FUNCTION;
 
     l->cursor++;
 
@@ -196,7 +202,7 @@ lex_comment(struct lexer *l)
     size_t start = l->cursor;
 
     // does not yet support multi-line comments
-    while (l->cursor <= l->len && l->content[l->cursor] != '\n')
+    while (l->cursor < l->len && l->content[l->cursor] != '\n')
         l->cursor++;
 
     t.lexeme = &l->content[start];

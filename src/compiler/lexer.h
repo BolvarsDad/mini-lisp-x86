@@ -8,13 +8,13 @@ char            lexer_peek          (struct lexer *l);
 void            tokenize            (char const *line, size_t len);
 struct token    lex_paren           (struct lexer *l);
 struct token    lex_string          (struct lexer *l);
-struct token    lex_operator        (struct lexer *l);
+struct token    lex_function        (struct lexer *l);
 struct token    lex_numeric         (struct lexer *l);
 struct token    lex_macro           (struct lexer *l);
 struct token    lex_keyword         (struct lexer *l);
 struct token    lex_symbol          (struct lexer *l);
 struct token    lex_comment         (struct lexer *l);
-int      is_symbol_char      (char c);
+int             is_symbol_char      (char c);
 
 enum toktype {
     TOK_END = 0,
@@ -26,8 +26,8 @@ enum toktype {
     TOK_MACRO,      // #+
     TOK_STRING,
     TOK_NUMERIC,
-    TOK_OPERATOR,
-    TOK_COMMENT
+    TOK_FUNCTION,
+    TOK_COMMENT,
 };
 
 struct token {
