@@ -16,50 +16,32 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. 
 
     File: ast.c
-    Purpose: Implements the AST (Abstract Sytax Tree) for x86_64 code generation using BNF.
-    BNF: https://en.wikipedia.org/wiki/Backus%E2%80%93Naur_form
+    Purpose: Implements the AST (Abstract Sytax Tree) for x86_64 code generation.
 */
 
 #include "ast.h"
 #include "lexer.h"
+#include "hashmap.h"
 
 struct node *
-node_create(struct token *t, enum nodetype type)
+node_create(struct token *t)
 {
-    struct node *n = calloc(1, sizeof(struct node));
-    if (n == NULL)
-        return NULL;
+    struct node *n = malloc(sizeof(struct node));
+    if (!n) return NULL;
 
-    n->type = type;
-    n->token = *t;
+    if (t.type == LPAREN) {
+        n->type           = NODE_LIST;
+        n->list->capacity = 16;
+        n->list->count    = 0;
+        n->list->children = (struct node **)calloc(n->list->capacity, sizeof(struct node *));
 
-    n->nchildren = 0;
-    n->capacity = 0;
-    n->content = t->lexeme;
+        return n;
+    }
 
-    n->children = NULL;
+    n->type = NODE_ATOM;
+    n->atom->token = t;
 
     return n;
 }
 
-void
-print_ast(struct *node root)
-{
-    switch (root->type) {
-        case NODE_LIST:
-            printf("LIST:\n");
 
-            for (size_t i = 0; i < root->nchildren; ++i)
-                print_ast(n->children[i]);
-
-            break;
-
-        case NODE_SYMBOL:
-            printf("SYMBOL: %.*s\n", (int)root->token.len, root->token.lexeme);
-            break;
-
-        case NODE_NUMERIC:
-            printf("NUMERIC: %.*s\n", (int)root->token.len, root->token.lexeme);
-            break;
-    }
-}

@@ -3,32 +3,34 @@
 
 enum nodetype {
     NODE_PROGRAM,
-    NODE_LIST,
+    NODE_INVALID,
+    NODE_LPAREN,
+    NODE_RPAREN,
     NODE_SYMBOL,
-    NODE_NUMBER,
-    NODE_STRING,
     NODE_KEYWORD,
-    NODE_DEFUN,
-    NODE_DEFMACRO,
-    NODE_LAMBDA,
-    NODE_LET,
-    NODE_IF,
-    NODE_WHEN,
-    NODE_DEFINE,
-    NODE_CALL,
-    NODE_QUOTE,
-    NODE_ERROR 
-}
+    NODE_STRING,
+    NODE_NUMERIC,
+    NODE_COMMENT,
+};
 
 struct node {
     enum nodetype type;
+
+    union data {
+        struct node_atom atom;
+        struct node_list list;
+    };
+};
+
+struct node_atom {
     struct token token;
+};
 
-    size_t nchildren;
+struct node_list {
+    struct node **children;
+
+    size_t count;
     size_t capacity;
-    char *content;
-
-    struct node *children;
 };
 
 #endif

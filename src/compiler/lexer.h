@@ -23,10 +23,10 @@ enum toktype {
     TOK_RPAREN,
     TOK_SYMBOL,     // e.g. variable names
     TOK_KEYWORD,    // e.g. 'format'
-    TOK_MACRO,      // #+
     TOK_STRING,
-    TOK_NUMERIC,
     TOK_FUNCTION,
+    TOK_MACRO
+    TOK_NUMERIC,
     TOK_COMMENT,
 };
 

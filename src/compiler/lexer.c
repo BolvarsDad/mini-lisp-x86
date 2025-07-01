@@ -28,7 +28,7 @@
 #include "lexer.h"
 
 #define MAX_TOKS 256
-#define LUTSZ 128
+#define LUTSZ 256
 
 static struct token (*token_handlers[LUTSZ])(struct lexer *) = {0};
 
