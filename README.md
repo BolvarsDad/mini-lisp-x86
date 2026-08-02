@@ -24,15 +24,16 @@ cd src
 ```
 
 ```bash
-$ ./lispc average.lisp                             # writes average.s
-$ gcc average.s build/runtime/runtime.o -o average
+$ ./lispc -o average average.lisp   # also writes average.s next to the source
 $ ./average
 15
 ```
 
+`-d` additionally dumps the IR and annotates the generated assembly with
+the IR it lowers.
+
 A program returns the value of its last top-level form; the runtime prints
-it. For the bundled test programs there's a make shortcut that does all
-three steps:
+it. For the bundled test programs there's an equivalent make shortcut:
 
 ```bash
 $ make tests/stage_2/01_variable_binding.bin
@@ -94,10 +95,12 @@ allocation strategy.
 - [x] Intermediate representation (three-address code)
 - [x] x86_64 code generation (spill everything)
 - [x] Basic runtime system (result printing)
+- [x] Driver produces executables directly (`-o`, gcc under the hood)
 - [ ] `format` and the builtin calling convention
 - [ ] Comparison predicates `< > =`
 - [ ] Constant folding (AST → AST pass)
 - [ ] Functions: `defun`, `lambda`, recursion
 - [ ] Linear-scan register allocation
+- [ ] Own assembler/linker — no GCC anywhere in the pipeline
 
 ---
