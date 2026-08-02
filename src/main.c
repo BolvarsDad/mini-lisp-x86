@@ -19,10 +19,15 @@
     Purpose: Entry point for the mlispc compiler driver.
 */
 
+#define _POSIX_C_SOURCE 200809L // fork/exec/readlink for the -o link step
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <limits.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 #include "./compiler/lexer.h"
 #include "./compiler/token_stream.h"
@@ -41,9 +46,10 @@ usage(FILE *stream)
     fprintf(stream, "MlispC - A minimal compiler from Common Lisp to x86_64\n");
     fprintf(stream, "usage: mlispc [options] <file.lisp>\n");
     fprintf(stream, "options:\n");
-    fprintf(stream, "  -d, --debug      dump IR to stdout, annotate assembly with IR comments\n");
-    fprintf(stream, "  -v, --version    show version info\n");
-    fprintf(stream, "  -h, --help       show this help\n");
+    fprintf(stream, "  -d, --debug          dump IR to stdout, annotate assembly with IR comments\n");
+    fprintf(stream, "  -o, --output <file>  also assemble and link an executable to <file>\n");
+    fprintf(stream, "  -v, --version        show version info\n");
+    fprintf(stream, "  -h, --help           show this help\n");
 }
 
 char *
@@ -100,19 +106,12 @@ derive_asm_path(const char *input)
 }
 
 static int
-emit_asm_file(const struct ir_program *ir, const char *source_path, int annotate)
+emit_asm_file(const struct ir_program *ir, const char *asm_path, int annotate)
 {
-    char *asm_path = derive_asm_path(source_path);
-    if (asm_path == NULL) {
-        fprintf(stderr, "minilisp: Cannot allocate memory.\n");
-        return 1;
-    }
-
     FILE *out = fopen(asm_path, "w");
     if (out == NULL) {
         fprintf(stderr, "minilisp: Cannot open output file `%s`.\n", asm_path);
         perror("Error");
-        free(asm_path);
         return 1;
     }
 
@@ -126,28 +125,104 @@ emit_asm_file(const struct ir_program *ir, const char *source_path, int annotate
     }
 
     fclose(out);
-    free(asm_path);
 
     return status;
+}
+
+/* Locate build/runtime/runtime.o relative to the lispc binary itself
+ * (via /proc/self/exe) so linking works from any working directory. */
+static int
+find_runtime_object(char *buf, size_t bufsize)
+{
+    ssize_t n = readlink("/proc/self/exe", buf, bufsize - 1);
+    if (n < 0)
+        return -1;
+    buf[n] = '\0';
+
+    char *slash = strrchr(buf, '/');
+    if (slash == NULL)
+        return -1;
+    slash[1] = '\0';
+
+    const char *rel = "build/runtime/runtime.o";
+    if (strlen(buf) + strlen(rel) + 1 > bufsize)
+        return -1;
+    strcat(buf, rel);
+
+    return 0;
+}
+
+/* Assemble and link the generated .s against the runtime. gcc is a
+ * subprocess implementation detail here; this seam is where our own
+ * assembler/linker slots in later. */
+static int
+link_executable(const char *asm_path, const char *out_path)
+{
+    char runtime_path[PATH_MAX];
+
+    if (find_runtime_object(runtime_path, sizeof runtime_path) != 0) {
+        fprintf(stderr, "minilisp: Cannot locate runtime object relative to lispc.\n");
+        return 1;
+    }
+
+    if (access(runtime_path, R_OK) != 0) {
+        fprintf(stderr, "minilisp: Runtime object `%s` not found; run `make` in src/.\n",
+                runtime_path);
+        return 1;
+    }
+
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("minilisp: fork");
+        return 1;
+    }
+
+    if (pid == 0) {
+        execlp("gcc", "gcc", asm_path, runtime_path, "-o", out_path, (char *)NULL);
+        perror("minilisp: exec gcc");
+        _exit(127);
+    }
+
+    int wstatus;
+
+    if (waitpid(pid, &wstatus, 0) < 0) {
+        perror("minilisp: waitpid");
+        return 1;
+    }
+
+    if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
+        fprintf(stderr, "minilisp: Linking `%s` failed.\n", out_path);
+        return 1;
+    }
+
+    printf("Executable written to %s\n", out_path);
+
+    return 0;
 }
 
 int
 main(int argc, char **argv)
 {
     static const struct option long_options[] = {
-        { "debug",   no_argument, NULL, 'd' },
-        { "version", no_argument, NULL, 'v' },
-        { "help",    no_argument, NULL, 'h' },
+        { "debug",   no_argument,       NULL, 'd' },
+        { "output",  required_argument, NULL, 'o' },
+        { "version", no_argument,       NULL, 'v' },
+        { "help",    no_argument,       NULL, 'h' },
         { NULL, 0, NULL, 0 }
     };
 
     int opt;
     int debug = 0;
+    const char *out_path = NULL;
 
-    while ((opt = getopt_long(argc, argv, "dvh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "do:vh", long_options, NULL)) != -1) {
         switch (opt) {
         case 'd':
             debug = 1;
+            break;
+        case 'o':
+            out_path = optarg;
             break;
         case 'v':
             printf("mlispc version %s\n", VERSION);
@@ -208,7 +283,19 @@ main(int argc, char **argv)
                 if (debug)
                     ir_program_print(ir, stdout);
 
-                status = emit_asm_file(ir, source_path, debug);
+                char *asm_path = derive_asm_path(source_path);
+
+                if (asm_path == NULL) {
+                    fprintf(stderr, "minilisp: Cannot allocate memory.\n");
+                    status = 1;
+                } else {
+                    status = emit_asm_file(ir, asm_path, debug);
+
+                    if (status == 0 && out_path != NULL)
+                        status = link_executable(asm_path, out_path);
+
+                    free(asm_path);
+                }
             }
 
             ir_program_free(ir);

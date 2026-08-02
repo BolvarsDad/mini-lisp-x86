@@ -45,8 +45,7 @@ $(RUNTIME_OBJ): runtime/runtime.c
 # Compile and link a lisp program against the runtime:
 #   make tests/stage_1/04_arithmetic.bin && ./tests/stage_1/04_arithmetic.bin
 %.bin: %.lisp $(TARGET) $(RUNTIME_OBJ)
-	./$(TARGET) $<
-	$(CC) $*.s $(RUNTIME_OBJ) -o $@
+	./$(TARGET) -o $@ $<
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
