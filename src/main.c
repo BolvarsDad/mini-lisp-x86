@@ -152,8 +152,37 @@ find_runtime_object(char *buf, size_t bufsize)
     return 0;
 }
 
-/* Assemble and link the generated .s against the runtime. gcc is a
- * subprocess implementation detail here; this seam is where our own
+/* Fork/exec argv[0] on PATH and wait; returns 0 iff it exited 0. */
+static int
+run_tool(char *const argv[])
+{
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("minilisp: fork");
+        return 1;
+    }
+
+    if (pid == 0) {
+        execvp(argv[0], argv);
+        fprintf(stderr, "minilisp: exec %s: ", argv[0]);
+        perror(NULL);
+        _exit(127);
+    }
+
+    int wstatus;
+
+    if (waitpid(pid, &wstatus, 0) < 0) {
+        perror("minilisp: waitpid");
+        return 1;
+    }
+
+    return !(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+}
+
+/* Assemble and link the generated .s against the freestanding runtime
+ * by exec'ing binutils directly: `as` then `ld` — no gcc driver, no
+ * crt files, no libc. These subprocesses are the seam where our own
  * assembler/linker slots in later. */
 static int
 link_executable(const char *asm_path, const char *out_path)
@@ -171,34 +200,39 @@ link_executable(const char *asm_path, const char *out_path)
         return 1;
     }
 
-    pid_t pid = fork();
+    size_t len = strlen(asm_path);
+    char *obj_path = malloc(len + 1);
 
-    if (pid < 0) {
-        perror("minilisp: fork");
+    if (obj_path == NULL) {
+        fprintf(stderr, "minilisp: Cannot allocate memory.\n");
         return 1;
     }
 
-    if (pid == 0) {
-        execlp("gcc", "gcc", asm_path, runtime_path, "-o", out_path, (char *)NULL);
-        perror("minilisp: exec gcc");
-        _exit(127);
-    }
+    memcpy(obj_path, asm_path, len + 1);
+    obj_path[len - 1] = 'o';    // derive_asm_path guarantees a ".s" suffix
 
-    int wstatus;
+    char *as_argv[] = { "as", (char *)asm_path, "-o", obj_path, NULL };
+    char *ld_argv[] = { "ld", obj_path, runtime_path, "-o", (char *)out_path,
+                        NULL };
 
-    if (waitpid(pid, &wstatus, 0) < 0) {
-        perror("minilisp: waitpid");
-        return 1;
-    }
+    int status = 0;
 
-    if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
+    if (run_tool(as_argv) != 0) {
+        fprintf(stderr, "minilisp: Assembling `%s` failed.\n", asm_path);
+        status = 1;
+    } else if (run_tool(ld_argv) != 0) {
         fprintf(stderr, "minilisp: Linking `%s` failed.\n", out_path);
-        return 1;
+        status = 1;
     }
 
-    printf("Executable written to %s\n", out_path);
+    if (status == 0) {
+        unlink(obj_path);
+        printf("Executable written to %s\n", out_path);
+    }
 
-    return 0;
+    free(obj_path);
+
+    return status;
 }
 
 int

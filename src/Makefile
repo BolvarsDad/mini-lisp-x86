@@ -1,6 +1,12 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=iso9899:1999 -g -O0 -I. -MMD -MP
 
+# The runtime is freestanding: no libc, no crt files, so compiled lisp
+# programs link with plain `ld`. No stack protector (its handler lives
+# in libc) and no PIE (ld produces a static non-PIE executable).
+RUNTIME_CFLAGS = -ffreestanding -fno-stack-protector -fno-pie \
+	-fno-asynchronous-unwind-tables
+
 BUILD_DIR = build
 TARGET = lispc
 RUNTIME_OBJ = $(BUILD_DIR)/runtime/runtime.o
@@ -40,7 +46,7 @@ $(BUILD_DIR)/util/%.o: ./util/%.c
 
 $(RUNTIME_OBJ): runtime/runtime.c
 	@mkdir -p $(BUILD_DIR)/runtime
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(RUNTIME_CFLAGS) -c $< -o $@
 
 # Compile and link a lisp program against the runtime:
 #   make tests/stage_1/04_arithmetic.bin && ./tests/stage_1/04_arithmetic.bin
@@ -49,7 +55,7 @@ $(RUNTIME_OBJ): runtime/runtime.c
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
-	find tests -name '*.s' -delete -o -name '*.bin' -delete
+	find tests -name '*.s' -delete -o -name '*.bin' -delete -o -name '*.o' -delete
 
 # auto-generated header dependencies (-MMD)
 -include $(OBJECTS:.o=.d) $(RUNTIME_OBJ:.o=.d)

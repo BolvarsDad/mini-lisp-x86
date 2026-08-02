@@ -41,8 +41,11 @@ $ ./tests/stage_2/01_variable_binding.bin
 30
 ```
 
-Requires GCC (or any C99 compiler) on x86_64 Linux. `make clean` removes
-all build output, including generated `.s`/`.bin` files.
+x86_64 Linux only. Building the compiler requires GCC (or any C99
+compiler); compiling lisp programs additionally needs binutils (`as` and
+`ld`). The produced binaries are small static executables with no libc
+dependency. `make clean` removes all build output, including generated
+`.s`/`.bin` files.
 
 ---
 
@@ -95,7 +98,9 @@ allocation strategy.
 - [x] Intermediate representation (three-address code)
 - [x] x86_64 code generation (spill everything)
 - [x] Basic runtime system (result printing)
-- [x] Driver produces executables directly (`-o`, gcc under the hood)
+- [x] Driver produces executables directly (`-o`)
+- [x] Freestanding runtime — no libc; programs assemble and link with
+      plain `as` + `ld`
 - [ ] `format` and the builtin calling convention
 - [ ] Comparison predicates `< > =`
 - [ ] Constant folding (AST → AST pass)

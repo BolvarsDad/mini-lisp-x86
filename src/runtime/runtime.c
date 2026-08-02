@@ -16,35 +16,120 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
     File: runtime.c
-    Purpose: Process entry for compiled programs; calls the generated
-    lisp_entry and prints its tagged-word result.
+    Purpose: Freestanding process entry for compiled programs — no libc.
+    _start calls the generated lisp_entry, prints its tagged-word result
+    over raw write syscalls, and exits via the exit syscall, so programs
+    link with `ld` alone: no crt startup files, no interpreter.
 */
 
-#include <stdio.h>
 #include <stdint.h>
 
 #include "../compiler/ir.h"
 
 extern int64_t lisp_entry(void);
 
+/* x86_64 Linux syscall numbers */
+#define SYS_WRITE 1
+#define SYS_EXIT  60
+
+#define STDOUT_FD 1
+
+static void
+sys_write(int fd, const void *buf, unsigned long count)
+{
+    long ret;
+
+    /* the syscall instruction clobbers rcx (return rip) and r11 (rflags) */
+    __asm__ volatile ("syscall"
+                      : "=a"(ret)
+                      : "a"((long)SYS_WRITE), "D"((long)fd), "S"(buf),
+                        "d"(count)
+                      : "rcx", "r11", "memory");
+    (void)ret;
+}
+
+static void
+sys_exit(int code)
+{
+    __asm__ volatile ("syscall"
+                      :
+                      : "a"((long)SYS_EXIT), "D"((long)code)
+                      : "rcx", "r11", "memory");
+    __builtin_unreachable();
+}
+
+static void
+write_str(const char *s)
+{
+    unsigned long len = 0;
+
+    while (s[len] != '\0')
+        ++len;
+
+    sys_write(STDOUT_FD, s, len);
+}
+
+static void
+write_int(int64_t v)
+{
+    char buf[21];               /* -9223372036854775808 */
+    char *p = buf + sizeof buf;
+    /* negate as unsigned so INT64_MIN doesn't overflow */
+    uint64_t u = (v < 0) ? -(uint64_t)v : (uint64_t)v;
+
+    do {
+        *--p = (char)('0' + u % 10);
+        u /= 10;
+    } while (u != 0);
+
+    if (v < 0)
+        *--p = '-';
+
+    sys_write(STDOUT_FD, p, (unsigned long)(buf + sizeof buf - p));
+}
+
+static void
+write_hex(uint64_t v)
+{
+    char buf[18];               /* "0x" + 16 digits */
+    char *p = buf + sizeof buf;
+
+    do {
+        *--p = "0123456789abcdef"[v & 0xF];
+        v >>= 4;
+    } while (v != 0);
+
+    *--p = 'x';
+    *--p = '0';
+
+    sys_write(STDOUT_FD, p, (unsigned long)(buf + sizeof buf - p));
+}
+
 void
 runtime_print(int64_t obj)
 {
-    if (IS_INTEGER(obj))
-        printf("%ld", (long)(obj >> INTEGER_SHIFT));
-    else if (IS_STRING(obj))
-        fputs((const char *)(obj & ~(int64_t)STRING_TAG), stdout);
-    else
-        printf("#<unknown object type %#lx>", (unsigned long)obj);
+    if (IS_INTEGER(obj)) {
+        write_int(obj >> INTEGER_SHIFT);
+    } else if (IS_NIL(obj)) {
+        write_str("NIL");
+    } else if (IS_T(obj)) {
+        write_str("T");
+    } else if (IS_STRING(obj)) {
+        write_str((const char *)(obj & ~(int64_t)STRING_TAG));
+    } else {
+        write_str("#<unknown object type ");
+        write_hex((uint64_t)obj);
+        write_str(">");
+    }
 }
 
-int
-main(void)
+/* The kernel enters _start with rsp 16-aligned; compiled C assumes the
+ * post-call alignment (8 mod 16), so realign before making any calls. */
+__attribute__((force_align_arg_pointer))
+void
+_start(void)
 {
-    int64_t res = lisp_entry();
-
-    runtime_print(res);
-    putchar('\n');
-
-    return 0;
+    runtime_print(lisp_entry());
+    sys_write(STDOUT_FD, "\n", 1);
+    sys_exit(0);
 }
