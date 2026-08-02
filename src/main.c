@@ -16,14 +16,13 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
     File: main.c
-    Purpose: Entry point for the mlispc compiler driver; reads a source file,
-    drives it through the lexer, parser, semantic analyzer, IR translation and
-    codegen, reporting any diagnostics, and writes <input>.s on success.
+    Purpose: Entry point for the mlispc compiler driver.
 */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <getopt.h>
 
 #include "./compiler/lexer.h"
 #include "./compiler/token_stream.h"
@@ -34,23 +33,19 @@
 
 #include "./util/error.h"
 
-#define VERSION 1.0
-#define DEBUG 1
+#define VERSION "1.0"
 
-static inline void
-usage(void)
+static void
+usage(FILE *stream)
 {
-    printf("MlispC - A minimal compiler from Common Lisp to x86_64\n");
-    puts("usage: mlispc [options] <file.lisp>");
-    puts("options:");
-    puts("  -v");
-    puts("  --version    show version info");
-    puts("  -h");
-    puts("  --help       show this help");
-    exit(1);
+    fprintf(stream, "MlispC - A minimal compiler from Common Lisp to x86_64\n");
+    fprintf(stream, "usage: mlispc [options] <file.lisp>\n");
+    fprintf(stream, "options:\n");
+    fprintf(stream, "  -d, --debug      dump IR to stdout, annotate assembly with IR comments\n");
+    fprintf(stream, "  -v, --version    show version info\n");
+    fprintf(stream, "  -h, --help       show this help\n");
 }
 
-/* ! returns malloc'd buffer */
 char *
 read_file(char const *filename)
 {
@@ -67,7 +62,7 @@ read_file(char const *filename)
     fseek(fp, 0, SEEK_END);
     flen = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    buffer = malloc(flen + 1);
+    buffer = malloc(flen + 1); // file contents + '\0'
 
     if (buffer == NULL) {
         fprintf(stderr, "minilisp: Cannot allocate memory.\n");
@@ -105,7 +100,7 @@ derive_asm_path(const char *input)
 }
 
 static int
-emit_asm_file(const struct ir_program *ir, const char *source_path)
+emit_asm_file(const struct ir_program *ir, const char *source_path, int annotate)
 {
     char *asm_path = derive_asm_path(source_path);
     if (asm_path == NULL) {
@@ -123,9 +118,11 @@ emit_asm_file(const struct ir_program *ir, const char *source_path)
 
     int status = 0;
 
-    if (codegen_emit(ir, out) != 0) {
+    if (codegen_emit(ir, out, annotate) != 0) {
         fprintf(stderr, "minilisp: Failed to write `%s`.\n", asm_path);
         status = 1;
+    } else {
+        printf("Assembly successfully written to %s\n", asm_path);
     }
 
     fclose(out);
@@ -137,10 +134,40 @@ emit_asm_file(const struct ir_program *ir, const char *source_path)
 int
 main(int argc, char **argv)
 {
-    if (argc < 2)
-        usage();
+    static const struct option long_options[] = {
+        { "debug",   no_argument, NULL, 'd' },
+        { "version", no_argument, NULL, 'v' },
+        { "help",    no_argument, NULL, 'h' },
+        { NULL, 0, NULL, 0 }
+    };
 
-    char *source = read_file(argv[1]);
+    int opt;
+    int debug = 0;
+
+    while ((opt = getopt_long(argc, argv, "dvh", long_options, NULL)) != -1) {
+        switch (opt) {
+        case 'd':
+            debug = 1;
+            break;
+        case 'v':
+            printf("mlispc version %s\n", VERSION);
+            return 0;
+        case 'h':
+            usage(stdout);
+            return 0;
+        default: /* '?': getopt has already printed a diagnostic */
+            usage(stderr);
+            return 1;
+        }
+    }
+
+    if (optind != argc - 1) {
+        usage(stderr);
+        return 1;
+    }
+
+    const char *source_path = argv[optind];
+    char *source = read_file(source_path);
 
     if (source == NULL)
         return 1;
@@ -160,37 +187,36 @@ main(int argc, char **argv)
 
     struct token_stream *ts = token_stream_create(&tokens);
 
-    struct error_ctx *ctx = error_ctx_new(0); // default 32
+    struct error_ctx *errctx = error_ctx_new(0); // default 32
     int status = 0;
 
-    struct ast_node *program = parse_program(ts, ctx);
+    struct ast_node *program = parse_program(ts, errctx);
 
-    // Each stage runs only if the previous one produced no diagnostics
-    if (ctx->count == 0)
-        analyze_program(program, ctx);
+    if (errctx->count == 0)
+        analyze_program(program, errctx);
 
-    if (ctx->count == 0) {
+    if (errctx->count == 0) {
         struct ir_program *ir = ir_program_new();
 
         if (ir == NULL) {
             fprintf(stderr, "Fatal: Unable to allocate IR program\n");
             status = 1;
         } else {
-            if (translate_program(program, ir, ctx) != 0) {
+            if (translate_program(program, ir, errctx) != 0) {
                 status = 1;
             } else {
-                if (DEBUG)
+                if (debug)
                     ir_program_print(ir, stdout);
 
-                status = emit_asm_file(ir, argv[1]);
+                status = emit_asm_file(ir, source_path, debug);
             }
 
             ir_program_free(ir);
         }
     }
 
-    if (ctx->count != 0) {
-        error_ctx_print(ctx);
+    if (errctx->count != 0) {
+        error_ctx_print(errctx);
         status = 1;
     }
 
@@ -198,7 +224,7 @@ main(int argc, char **argv)
     free(ts);
     free(source);
     token_array_free(&tokens);
-    error_ctx_free(ctx);
+    error_ctx_free(errctx);
 
     return status;
 }

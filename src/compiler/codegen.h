@@ -42,8 +42,11 @@
  * Codegen must only run on a fully translated program; IR ops the
  * translator cannot emit yet are asserted as pipeline invariants.
  *
+ * When `annotate` is nonzero, each instruction is preceded by a
+ * comment showing the IR it lowers.
+ *
  * Returns 0 on success, -1 on error.
  */
-int codegen_emit(const struct ir_program *p, FILE *out);
+int codegen_emit(const struct ir_program *p, FILE *out, int annotate);
 
 #endif

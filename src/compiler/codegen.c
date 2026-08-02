@@ -22,6 +22,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 
 #include "codegen.h"
@@ -55,6 +56,23 @@ fits_imm32(int64_t v)
     return v >= INT32_MIN && v <= INT32_MAX;
 }
 
+/* IR-source comment above the instruction it lowers; no-op unless
+ * annotating. */
+static void
+ir_comment(FILE *out, int annotate, const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!annotate)
+        return;
+
+    fputs("    # ", out);
+    va_start(ap, fmt);
+    vfprintf(out, fmt, ap);
+    va_end(ap);
+    fputc('\n', out);
+}
+
 /* Emit a gas string literal producing exactly the bytes of `s`: the
  * lexer stores string contents raw, so every byte must round-trip. */
 static void
@@ -65,8 +83,10 @@ emit_string_literal(FILE *out, const char *s)
     for (const unsigned char *c = (const unsigned char *)s; *c != '\0'; ++c) {
         if (*c == '"' || *c == '\\')
             fprintf(out, "\\%c", *c);
+
         else if (*c < 0x20 || *c == 0x7F)
             fprintf(out, "\\%03o", *c);
+
         else
             fputc(*c, out);
     }
@@ -113,14 +133,14 @@ emit_return(FILE *out, int src)
 }
 
 static void
-emit_instr(const struct ir_instr *instr, FILE *out)
+emit_instr(const struct ir_instr *instr, FILE *out, int annotate)
 {
     switch (instr->op) {
         case IR_OP_NOP:
             break;
 
         case IR_OP_LOAD_IMM:
-            fprintf(out, "    # t%d = load_imm %ld\n", instr->dst, (long)instr->imm);
+            ir_comment(out, annotate, "t%d = load_imm %ld", instr->dst, (long)instr->imm);
             if (fits_imm32(instr->imm)) {
                 fprintf(out, "    mov qword ptr [rbp%ld], %ld\n",
                         slot(instr->dst), (long)instr->imm);
@@ -131,7 +151,7 @@ emit_instr(const struct ir_instr *instr, FILE *out)
             break;
 
         case IR_OP_LOAD_STR:
-            fprintf(out, "    # t%d = load_str str[%ld]\n", instr->dst, (long)instr->imm);
+            ir_comment(out, annotate, "t%d = load_str str[%ld]", instr->dst, (long)instr->imm);
             /* rip-relative so the code links as PIE; or sets the tag */
             fprintf(out, "    lea rax, .LC%ld[rip]\n", (long)instr->imm);
             fprintf(out, "    or rax, %d\n", STRING_TAG);
@@ -139,27 +159,27 @@ emit_instr(const struct ir_instr *instr, FILE *out)
             break;
 
         case IR_OP_MOV:
-            fprintf(out, "    # t%d = t%d\n", instr->dst, instr->src1);
+            ir_comment(out, annotate, "t%d = t%d", instr->dst, instr->src1);
             fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
             fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
             break;
 
         case IR_OP_ADD:
-            fprintf(out, "    # t%d = add t%d, t%d\n", instr->dst, instr->src1, instr->src2);
+            ir_comment(out, annotate, "t%d = add t%d, t%d", instr->dst, instr->src1, instr->src2);
             fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
             fprintf(out, "    add rax, [rbp%ld]\n", slot(instr->src2));
             fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
             break;
 
         case IR_OP_SUB:
-            fprintf(out, "    # t%d = sub t%d, t%d\n", instr->dst, instr->src1, instr->src2);
+            ir_comment(out, annotate, "t%d = sub t%d, t%d", instr->dst, instr->src1, instr->src2);
             fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
             fprintf(out, "    sub rax, [rbp%ld]\n", slot(instr->src2));
             fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
             break;
 
         case IR_OP_MUL:
-            fprintf(out, "    # t%d = mul t%d, t%d\n", instr->dst, instr->src1, instr->src2);
+            ir_comment(out, annotate, "t%d = mul t%d, t%d", instr->dst, instr->src1, instr->src2);
             fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
             fprintf(out, "    sar rax, %d\n", INTEGER_SHIFT);
             fprintf(out, "    imul rax, qword ptr [rbp%ld]\n", slot(instr->src2));
@@ -167,7 +187,7 @@ emit_instr(const struct ir_instr *instr, FILE *out)
             break;
 
         case IR_OP_DIV:
-            fprintf(out, "    # t%d = div t%d, t%d\n", instr->dst, instr->src1, instr->src2);
+            ir_comment(out, annotate, "t%d = div t%d, t%d", instr->dst, instr->src1, instr->src2);
             fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
             fprintf(out, "    sar rax, %d\n", INTEGER_SHIFT);
             fprintf(out, "    mov rcx, [rbp%ld]\n", slot(instr->src2));
@@ -179,7 +199,7 @@ emit_instr(const struct ir_instr *instr, FILE *out)
             break;
 
         case IR_OP_NEG:
-            fprintf(out, "    # t%d = neg t%d\n", instr->dst, instr->src1);
+            ir_comment(out, annotate, "t%d = neg t%d", instr->dst, instr->src1);
             fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
             fputs("    neg rax\n", out);
             fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
@@ -190,7 +210,7 @@ emit_instr(const struct ir_instr *instr, FILE *out)
             break;
 
         case IR_OP_JMP_IF_NIL:
-            fprintf(out, "    # jmp_if_nil t%d, L%ld\n", instr->src1, (long)instr->imm);
+            ir_comment(out, annotate, "jmp_if_nil t%d, L%ld", instr->src1, (long)instr->imm);
             fprintf(out, "    cmp qword ptr [rbp%ld], %ld\n",
                     slot(instr->src1), (long)NIL_WORD);
             fprintf(out, "    je .L%ld\n", (long)instr->imm);
@@ -201,7 +221,7 @@ emit_instr(const struct ir_instr *instr, FILE *out)
             break;
 
         case IR_OP_RETURN:
-            fprintf(out, "    # ret t%d\n", instr->src1);
+            ir_comment(out, annotate, "ret t%d", instr->src1);
             emit_return(out, instr->src1);
             break;
 
@@ -217,7 +237,7 @@ emit_instr(const struct ir_instr *instr, FILE *out)
 }
 
 int
-codegen_emit(const struct ir_program *p, FILE *out)
+codegen_emit(const struct ir_program *p, FILE *out, int annotate)
 {
     if (p == NULL || out == NULL)
         return -1;
@@ -235,16 +255,18 @@ codegen_emit(const struct ir_program *p, FILE *out)
     fputs("lisp_entry:\n", out);
     fputs("    push rbp\n", out);
     fputs("    mov rbp, rsp\n", out);
+
     if (frame > 0)
         fprintf(out, "    sub rsp, %ld\n", frame);
 
     for (size_t i = 0; i < p->count; ++i)
-        emit_instr(&p->instructions[i], out);
+        emit_instr(&p->instructions[i], out, annotate);
 
     /* An empty program has no RETURN; fall back to nil so lisp_entry
      * never returns garbage. */
     if (p->count == 0 || p->instructions[p->count - 1].op != IR_OP_RETURN) {
-        fprintf(out, "    mov rax, %ld    # implicit nil\n", (long)NIL_WORD);
+        ir_comment(out, annotate, "implicit nil");
+        fprintf(out, "    mov rax, %ld\n", (long)NIL_WORD);
         fputs("    leave\n", out);
         fputs("    ret\n", out);
     }
