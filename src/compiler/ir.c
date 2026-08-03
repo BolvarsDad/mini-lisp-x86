@@ -28,6 +28,7 @@
 #include "ir.h"
 #include "ast.h"
 #include "builtin_hash.h"
+#include "format_spec.h"
 #include "hashmap.h"
 #include "../util/mlispc_strdup.h"
 
@@ -47,9 +48,12 @@ struct ir_scope {
 
 static int translate_expr(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope);
 static int translate_arithmetic(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope, enum builtin_type kind);
+static int translate_comparison(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope, enum builtin_type kind);
 static int translate_let(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope);
 static int translate_if(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope);
+static int translate_format(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope);
 static int translate_nil(struct ir_program *p);
+static int translate_t(struct ir_program *p);
 
 struct ir_program *
 ir_program_new(void)
@@ -275,13 +279,8 @@ translate_expr(struct ast_node *node, struct ir_program *p, struct error_ctx *ct
             if (strcmp(node->as.symbol, "nil") == 0)
                 return translate_nil(p);
 
-            if (strcmp(node->as.symbol, "t") == 0) {
-                int dst = ir_new_temp(p);
-                if (ir_emit(p, IR_OP_LOAD_IMM, dst, IR_NONE, IR_NONE, T_WORD) != 0)
-                    return -1;
-
-                return dst;
-            }
+            if (strcmp(node->as.symbol, "t") == 0)
+                return translate_t(p);
 
             error_ctx_push(ctx, ERR_ERROR, node->line, node->col,
                     "IR translation for symbol '%s' not yet implemented", node->as.symbol);
@@ -307,11 +306,19 @@ translate_expr(struct ast_node *node, struct ir_program *p, struct error_ctx *ct
                 case BUILTIN_DIV:
                     return translate_arithmetic(node, p, ctx, scope, kind);
 
+                case BUILTIN_LT:
+                case BUILTIN_GT:
+                case BUILTIN_NUM_EQ:
+                    return translate_comparison(node, p, ctx, scope, kind);
+
                 case BUILTIN_LET:
                     return translate_let(node, p, ctx, scope);
 
                 case BUILTIN_IF:
                     return translate_if(node, p, ctx, scope);
+
+                case BUILTIN_FORMAT:
+                    return translate_format(node, p, ctx, scope);
 
                 default:
                     error_ctx_push(ctx, ERR_ERROR, node->line, node->col,
@@ -335,7 +342,8 @@ translate_expr(struct ast_node *node, struct ir_program *p, struct error_ctx *ct
  *   (+ x) == x    (* x) == x    (- x) == -x    (/ x) == 1/x
  */
 static int
-translate_arithmetic(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope, enum builtin_type kind)
+translate_arithmetic(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx,
+        struct ir_scope *scope, enum builtin_type kind)
 {
     enum ir_ops op;
 
@@ -403,12 +411,124 @@ translate_arithmetic(struct ast_node *node, struct ir_program *p, struct error_c
     return acc;
 }
 
+/*
+ * (< a b c) is n-ary: t when every adjacent pair compares true.
+ *
+ * Comparisons are functions, not special forms, so all arguments are
+ * evaluated before any comparison happens -- the chain short-circuits on
+ * the comparison, never on evaluation. That is why every operand temp is
+ * materialized up front rather than interleaved with the tests.
+ *
+ *   t_a, t_b, t_c = <a>, <b>, <c>
+ *   c0 = lt t_a, t_b
+ *   jmp_if_nil c0, L_false
+ *   c1 = lt t_b, t_c
+ *   jmp_if_nil c1, L_false
+ *   res = t
+ *   jmp L_end
+ * L_false:
+ *   res = nil
+ * L_end:
+ *
+ * Like `if`, the two paths join through MOV into a shared result temp.
+ */
+static int
+translate_comparison(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx,
+        struct ir_scope *scope, enum builtin_type kind)
+{
+    enum ir_ops op;
+
+    switch (kind) {
+        case BUILTIN_LT:     op = IR_OP_LT; break;
+        case BUILTIN_GT:     op = IR_OP_GT; break;
+        case BUILTIN_NUM_EQ: op = IR_OP_EQ; break;
+        default:
+            assert(0 && "translate_comparison called with non-comparison builtin");
+            return -1; // unreachable
+    }
+
+    size_t nargs = node->as.list.count - 1;
+    assert(nargs >= 1); // semantic analysis rejects zero-argument comparisons
+
+    int *args = malloc(nargs * sizeof(*args));
+    if (args == NULL)
+        return -1;
+
+    for (size_t i = 0; i < nargs; ++i) {
+        args[i] = translate_expr(node->as.list.children[i + 1], p, ctx, scope);
+        if (args[i] < 0) {
+            free(args);
+            return -1;
+        }
+    }
+
+    // (< x) evaluates x for its effects and is true by definition
+    if (nargs == 1) {
+        free(args);
+        return translate_t(p);
+    }
+
+    // The common two-argument case is a single instruction, no branching
+    if (nargs == 2) {
+        int dst = ir_new_temp(p);
+        int emitted = ir_emit(p, op, dst, args[0], args[1], 0);
+
+        free(args);
+        return emitted == 0 ? dst : -1;
+    }
+
+    int l_false = ir_new_label(p);
+    int l_end = ir_new_label(p);
+    int res = ir_new_temp(p);
+
+    for (size_t i = 0; i + 1 < nargs; ++i) {
+        int cmp = ir_new_temp(p);
+        if (ir_emit(p, op, cmp, args[i], args[i + 1], 0) != 0 ||
+            ir_emit(p, IR_OP_JMP_IF_NIL, IR_NONE, cmp, IR_NONE, l_false) != 0) {
+            free(args);
+            return -1;
+        }
+    }
+
+    free(args);
+
+    int yes = translate_t(p);
+    if (yes < 0)
+        return -1;
+
+    if (ir_emit(p, IR_OP_MOV, res, yes, IR_NONE, 0) != 0 ||
+        ir_emit(p, IR_OP_JMP, IR_NONE, IR_NONE, IR_NONE, l_end) != 0 ||
+        ir_emit(p, IR_OP_LABEL, IR_NONE, IR_NONE, IR_NONE, l_false) != 0)
+        return -1;
+
+    int no = translate_nil(p);
+    if (no < 0)
+        return -1;
+
+    if (ir_emit(p, IR_OP_MOV, res, no, IR_NONE, 0) != 0 ||
+        ir_emit(p, IR_OP_LABEL, IR_NONE, IR_NONE, IR_NONE, l_end) != 0)
+        return -1;
+
+    return res;
+}
+
 // nil is an immediate constant, so loading it is just a LOAD_IMM
 static int
 translate_nil(struct ir_program *p)
 {
     int dst = ir_new_temp(p);
     if (ir_emit(p, IR_OP_LOAD_IMM, dst, IR_NONE, IR_NONE, NIL_WORD) != 0)
+        return -1;
+
+    return dst;
+}
+
+// t is immediate too
+static int
+translate_t(struct ir_program *p)
+{
+    int dst = ir_new_temp(p);
+    if (ir_emit(p, IR_OP_LOAD_IMM, dst, IR_NONE, IR_NONE, T_WORD) != 0)
         return -1;
 
     return dst;
@@ -469,6 +589,99 @@ translate_if(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx,
         return -1;
 
     return res;
+}
+
+/*
+ * (format t "control" args...)
+ *
+ * The control string was validated and is re-parsed here (cheaper than
+ * threading a side table between stages), then expanded into one
+ * runtime call per segment: literal runs become write_str, ~a and ~d
+ * become write_aesthetic and write_decimal against an argument temp.
+ * Every call takes a single argument, so no variadic convention and no
+ * outgoing-argument area are needed.
+ *
+ * Arguments are all evaluated *before* any output is written, matching
+ * Common Lisp; interleaving evaluation with the calls would reorder
+ * side effects once functions can have them. Arguments the control
+ * string never consumes are still evaluated -- they are still
+ * arguments.
+ *
+ * (format t ...) evaluates to nil.
+ */
+static int
+translate_format(struct ast_node *node, struct ir_program *p, struct error_ctx *ctx, struct ir_scope *scope)
+{
+    assert(node->as.list.count >= 3);
+
+    struct ast_node *control = node->as.list.children[2];
+    assert(control->type == NODE_STRING);
+
+    struct format_spec spec;
+
+    // Analysis already accepted this string, so a failure here is due to allocation
+    if (format_spec_parse(control->as.string, &spec, NULL, NULL) != FORMAT_SPEC_OK)
+        return -1;
+
+    size_t nargs = node->as.list.count - 3;
+    int *args = NULL;
+
+    if (nargs > 0) {
+        args = malloc(nargs * sizeof(*args));
+        if (args == NULL) {
+            format_spec_free(&spec);
+            return -1;
+        }
+    }
+
+    for (size_t i = 0; i < nargs; ++i) {
+        args[i] = translate_expr(node->as.list.children[i + 3], p, ctx, scope);
+        if (args[i] < 0) {
+            free(args);
+            format_spec_free(&spec);
+            return -1;
+        }
+    }
+
+    size_t next_arg = 0;
+    int failed = 0;
+
+    for (size_t i = 0; i < spec.count && !failed; ++i) {
+        int arg;
+        enum ir_builtin builtin;
+
+        if (spec.segs[i].kind == FORMAT_SEG_LITERAL) {
+            int64_t idx = ir_program_str_push(p, spec.segs[i].text);
+            if (idx < 0) {
+                failed = 1;
+                break;
+            }
+
+            arg = ir_new_temp(p);
+            builtin = IR_BUILTIN_WRITE_STR;
+
+            if (ir_emit(p, IR_OP_LOAD_STR, arg, IR_NONE, IR_NONE, idx) != 0) {
+                failed = 1;
+                break;
+            }
+        } else {
+            assert(next_arg < nargs); // guaranteed by analyze_format
+
+            arg = args[next_arg++];
+            builtin = spec.segs[i].kind == FORMAT_SEG_AESTHETIC
+                ? IR_BUILTIN_WRITE_AESTHETIC
+                : IR_BUILTIN_WRITE_DECIMAL;
+        }
+
+        // A writer returns nothing, so the call has no destination
+        if (ir_emit(p, IR_OP_CALL_BUILTIN, IR_NONE, arg, IR_NONE, builtin) != 0)
+            failed = 1;
+    }
+
+    free(args);
+    format_spec_free(&spec);
+
+    return failed ? -1 : translate_nil(p);
 }
 
 /*
@@ -556,6 +769,25 @@ translate_program(struct ast_node *program, struct ir_program *p, struct error_c
     return 0;
 }
 
+/* One table serves codegen (the call target it emits) and the IR dump,
+ * so adding a builtin is a one-line change here plus the enum. */
+static const char *ir_builtin_symbols[IR_BUILTIN_COUNT] = {
+    [IR_BUILTIN_WRITE_STR]       = "runtime_write_str",
+    [IR_BUILTIN_WRITE_AESTHETIC] = "runtime_write_aesthetic",
+    [IR_BUILTIN_WRITE_DECIMAL]   = "runtime_write_decimal",
+};
+
+const char *
+ir_builtin_symbol(enum ir_builtin b)
+{
+    // the cast keeps the bound check meaningful whatever the compiler
+    // picks as the enum's underlying type
+    if ((int)b < 0 || (int)b >= IR_BUILTIN_COUNT)
+        return NULL;
+
+    return ir_builtin_symbols[b];
+}
+
 static const char *ir_op_names[IR_OP_COUNT] = {
     [IR_OP_NOP]          = "nop",
     [IR_OP_LOAD_IMM]     = "load_imm",
@@ -566,6 +798,9 @@ static const char *ir_op_names[IR_OP_COUNT] = {
     [IR_OP_MUL]          = "mul",
     [IR_OP_DIV]          = "div",
     [IR_OP_NEG]          = "neg",
+    [IR_OP_LT]           = "lt",
+    [IR_OP_GT]           = "gt",
+    [IR_OP_EQ]           = "eq",
     [IR_OP_CALL_BUILTIN] = "call_builtin",
     [IR_OP_CALL]         = "call",
     [IR_OP_RETURN]       = "ret",
@@ -594,17 +829,22 @@ ir_program_print(const struct ir_program *p, FILE *out)
                     fprintf(out, "t%d = t\n", instr->dst);
                 else
                     fprintf(out, "t%d = %ld\n", instr->dst, DECODE_INTEGER(instr->imm));
+
                 break;
 
             case IR_OP_LOAD_STR:
                 fprintf(out, "t%d = \"%s\"\t; str[%ld]\n",
                         instr->dst, p->strings[instr->imm], (long)instr->imm);
+                
                 break;
 
             case IR_OP_ADD:
             case IR_OP_SUB:
             case IR_OP_MUL:
             case IR_OP_DIV:
+            case IR_OP_LT:
+            case IR_OP_GT:
+            case IR_OP_EQ:
                 fprintf(out, "t%d = %s t%d, t%d\n",
                         instr->dst, ir_op_names[instr->op], instr->src1, instr->src2);
                 break;
@@ -632,6 +872,22 @@ ir_program_print(const struct ir_program *p, FILE *out)
             case IR_OP_RETURN:
                 fprintf(out, "ret t%d\n", instr->src1);
                 break;
+
+            case IR_OP_CALL_BUILTIN: {
+                const char *sym = ir_builtin_symbol((enum ir_builtin)instr->imm);
+
+                if (instr->dst != IR_NONE)
+                    fprintf(out, "t%d = ", instr->dst);
+
+                fprintf(out, "call_builtin %s", sym != NULL ? sym : "?");
+
+                if (instr->src1 != IR_NONE)
+                    fprintf(out, ", t%d", instr->src1);
+
+                fputc('\n', out);
+                
+                break;
+            }
 
             default:
                 fprintf(out, "%s dst=%d src1=%d src2=%d imm=%ld\n",

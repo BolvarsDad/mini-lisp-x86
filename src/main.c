@@ -46,7 +46,7 @@ usage(FILE *stream)
     fprintf(stream, "MlispC - A minimal compiler from Common Lisp to x86_64\n");
     fprintf(stream, "usage: mlispc [options] <file.lisp>\n");
     fprintf(stream, "options:\n");
-    fprintf(stream, "  -d, --debug          dump IR to stdout, annotate assembly with IR comments\n");
+    fprintf(stream, "  -d, --debug          dump IR, annotate assembly, echo the program's result\n");
     fprintf(stream, "  -o, --output <file>  also assemble and link an executable to <file>\n");
     fprintf(stream, "  -v, --version        show version info\n");
     fprintf(stream, "  -h, --help           show this help\n");
@@ -105,8 +105,10 @@ derive_asm_path(const char *input)
     return path;
 }
 
+/* `debug` drives both the IR comments in the assembly and the
+ * runtime's result echo. */
 static int
-emit_asm_file(const struct ir_program *ir, const char *asm_path, int annotate)
+emit_asm_file(const struct ir_program *ir, const char *asm_path, int debug)
 {
     FILE *out = fopen(asm_path, "w");
     if (out == NULL) {
@@ -117,7 +119,7 @@ emit_asm_file(const struct ir_program *ir, const char *asm_path, int annotate)
 
     int status = 0;
 
-    if (codegen_emit(ir, out, annotate) != 0) {
+    if (codegen_emit(ir, out, debug, debug) != 0) {
         fprintf(stderr, "minilisp: Failed to write `%s`.\n", asm_path);
         status = 1;
     } else {

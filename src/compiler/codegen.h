@@ -45,8 +45,15 @@
  * When `annotate` is nonzero, each instruction is preceded by a
  * comment showing the IR it lowers.
  *
+ * `echo_result` is emitted as the runtime's `lisp_echo_result` flag:
+ * when zero the runtime prints nothing of its own, so the program's
+ * stdout is exactly what it writes itself.
+ *
+ * (A struct of options starts to look right at the third flag; two
+ * ints do not yet justify one.)
+ *
  * Returns 0 on success, -1 on error.
  */
-int codegen_emit(const struct ir_program *p, FILE *out, int annotate);
+int codegen_emit(const struct ir_program *p, FILE *out, int annotate, int echo_result);
 
 #endif

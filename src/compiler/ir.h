@@ -24,6 +24,10 @@
  *   MUL      (a<<2) * (b<<2) == (a*b)<<4, so untag one operand first
  *   DIV      untag both operands, divide, re-encode the quotient
  *   truth    only nil is false: JMP_IF_NIL is `cmp reg, NIL_WORD; je`
+ *   LT/GT/EQ compare tagged words directly -- `n << 2` is monotonic in
+ *            n, so the shift preserves signed ordering. The boolean
+ *            result materializes branchlessly because T_WORD and
+ *            NIL_WORD differ in exactly one bit (see codegen).
  *
  * Control flow stays a flat instruction stream: IR_OP_LABEL is a
  * no-op marker carrying a label id (from a per-program counter), and
@@ -189,7 +193,10 @@ enum ir_ops {
     IR_OP_MUL,          // dst = src1 * src2
     IR_OP_DIV,          // dst = src1 / src2
     IR_OP_NEG,          // dst = -src1
-    IR_OP_CALL_BUILTIN,
+    IR_OP_LT,           // dst = t if src1 <  src2 else nil
+    IR_OP_GT,           // dst = t if src1 >  src2 else nil
+    IR_OP_EQ,           // dst = t if src1 == src2 else nil
+    IR_OP_CALL_BUILTIN, // dst = builtin imm (src1), dst/src1 IR_NONE if unused
     IR_OP_CALL,
     IR_OP_RETURN,       // return src1 to the runtime
     IR_OP_JMP,          // jump to label imm
@@ -197,6 +204,23 @@ enum ir_ops {
     IR_OP_LABEL,        // no-op jump target; imm = label id
     IR_OP_COUNT
 };
+
+/*
+ * Runtime entry points callable from generated code. A builtin call
+ * takes at most one tagged word (System V: rdi in, rax out), which is
+ * what lets IR_OP_CALL_BUILTIN fit the fixed instruction struct below:
+ * `format` is expanded into a sequence of these at compile time rather
+ * than being lowered as one variadic call.
+ */
+enum ir_builtin {
+    IR_BUILTIN_WRITE_STR,        /* void runtime_write_str(word)       */
+    IR_BUILTIN_WRITE_AESTHETIC,  /* void runtime_write_aesthetic(word) */
+    IR_BUILTIN_WRITE_DECIMAL,    /* void runtime_write_decimal(word)   */
+    IR_BUILTIN_COUNT
+};
+
+/* Assembly symbol implementing `b`, or NULL if `b` is out of range. */
+const char *ir_builtin_symbol(enum ir_builtin b);
 
 struct ir_instr {
     enum ir_ops op;

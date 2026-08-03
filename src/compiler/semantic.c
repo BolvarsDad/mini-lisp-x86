@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "semantic.h"
+#include "format_spec.h"
 #include "hashmap.h"
 #include "../util/error.h"
 
@@ -40,6 +41,7 @@ static void analyze_symbol(struct ast_node *, struct env *, struct error_ctx *ct
 static void analyze_if(struct ast_node *, struct env *, struct error_ctx *ctx);
 static void analyze_format(struct ast_node *, struct env *, struct error_ctx *ctx);
 static void analyze_arithmetic(struct ast_node *, struct env *, struct error_ctx *ctx);
+static void analyze_comparison(struct ast_node *, struct env *, struct error_ctx *ctx);
 static void analyze_function_call(struct ast_node *, struct env *, struct error_ctx *ctx);
 static void analyze_let(struct ast_node *, struct env *, struct error_ctx *ctx);
 static void init_global_env();
@@ -155,6 +157,9 @@ init_global_env(void)
     env_insert(global_env, "-", sym_info_new(SYM_FUNC, 2, -1));
     env_insert(global_env, "*", sym_info_new(SYM_FUNC, 2, -1));
     env_insert(global_env, "/", sym_info_new(SYM_FUNC, 2, -1));
+    env_insert(global_env, "<", sym_info_new(SYM_FUNC, 1, -1));
+    env_insert(global_env, ">", sym_info_new(SYM_FUNC, 1, -1));
+    env_insert(global_env, "=", sym_info_new(SYM_FUNC, 1, -1));
     env_insert(global_env, "format", sym_info_new(SYM_FUNC, 2, -1));
     env_insert(global_env, "let", sym_info_new(SYM_FUNC, 1, -1));
 }
@@ -179,6 +184,12 @@ analyze_list(struct ast_node *node, struct env *env, struct error_ctx *ctx)
         case BUILTIN_MUL:
         case BUILTIN_DIV:
             analyze_arithmetic(node, env, ctx);
+            break;
+
+        case BUILTIN_LT:
+        case BUILTIN_GT:
+        case BUILTIN_NUM_EQ:
+            analyze_comparison(node, env, ctx);
             break;
 
         case BUILTIN_IF:
@@ -266,6 +277,15 @@ analyze_if(struct ast_node *node, struct env *env, struct error_ctx *ctx)
 }
 
 
+/*
+ * (format t "control" args...)
+ *
+ * The control string is compiled, not interpreted at run time, so it
+ * must be a string literal and its directives are checked here: an
+ * unknown directive is a compile error, and so is supplying fewer
+ * arguments than the directives consume. Extra arguments are ignored,
+ * matching Common Lisp.
+ */
 static void
 analyze_format(struct ast_node *node, struct env *env, struct error_ctx *ctx)
 {
@@ -286,6 +306,65 @@ analyze_format(struct ast_node *node, struct env *env, struct error_ctx *ctx)
 
         return;
     }
+
+    // (format nil ...) returns the formatted text as a fresh string,
+    // which there is no heap to allocate from yet
+    if (strcmp(dest->as.symbol, "nil") == 0) {
+        error_ctx_push(ctx, ERR_ERROR, dest->line, dest->col,
+                "'format' to nil returns a string, which requires heap allocation (not yet supported)");
+
+        return;
+    }
+
+    struct ast_node *control = node->as.list.children[2];
+    if (control->type != NODE_STRING) {
+        error_ctx_push(ctx, ERR_ERROR, control->line, control->col,
+                "'format' control string must be a string literal");
+
+        return;
+    }
+
+    struct format_spec spec;
+    size_t bad_offset = 0;
+    char bad_directive = '\0';
+
+    int parsed = format_spec_parse(control->as.string, &spec, &bad_offset, &bad_directive);
+
+    if (parsed == FORMAT_SPEC_NOMEM) {
+        error_ctx_push(ctx, ERR_FATAL, control->line, control->col,
+                "Out of memory parsing 'format' control string");
+
+        return;
+    }
+
+    if (parsed != FORMAT_SPEC_OK) {
+        // col identifies the opening quote and the lexer stores string
+        // contents raw, so the offset within the string carries over
+        size_t col = control->col + 1 + bad_offset;
+
+        if (bad_directive == '\0')
+            error_ctx_push(ctx, ERR_ERROR, control->line, col,
+                    "'format' control string ends with a stray '~'");
+        else
+            error_ctx_push(ctx, ERR_ERROR, control->line, col,
+                    "Unknown 'format' directive '~%c'", bad_directive);
+
+        return;
+    }
+
+    // Extra arguments are ignored, but missing ones would leave a
+    // directive with nothing to print
+    if (spec.directive_count > nargs - 2) {
+        error_ctx_push(ctx, ERR_ERROR, control->line, control->col,
+                "'format' control string needs %zu argument%s but %zu were supplied",
+                spec.directive_count, spec.directive_count == 1 ? "" : "s",
+                nargs - 2);
+
+        format_spec_free(&spec);
+        return;
+    }
+
+    format_spec_free(&spec);
 
     // Destination is already validated; analyze the remaining arguments
     for (size_t i = 2; i < node->as.list.count; ++i)
@@ -363,6 +442,28 @@ analyze_arithmetic(struct ast_node *node, struct env *env, struct error_ctx *ctx
     if (nargs < 1) {
         error_ctx_push(ctx, ERR_ERROR, node->line, node->col,
                 "Arithmetic operation '%s' expects at least one argument",
+                node->as.list.children[0]->as.symbol);
+
+        return;
+    }
+
+    for (size_t i = 1; i < node->as.list.count; ++i) {
+        analyze_node(node->as.list.children[i], env, ctx);
+    }
+}
+
+/*
+ * (< a b c ...) and friends are n-ary in Common Lisp: the result is t
+ * when every adjacent pair compares true. One argument is legal and
+ * trivially true; zero is not.
+ */
+static void
+analyze_comparison(struct ast_node *node, struct env *env, struct error_ctx *ctx)
+{
+    size_t nargs = node->as.list.count - 1;
+    if (nargs < 1) {
+        error_ctx_push(ctx, ERR_ERROR, node->line, node->col,
+                "Comparison '%s' expects at least one argument",
                 node->as.list.children[0]->as.symbol);
 
         return;

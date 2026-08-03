@@ -38,6 +38,12 @@
  *
  * String literals live in .data under .LC<n> labels, .align 8 so the
  * low three bits of their address are free for the string tag.
+ *
+ * Builtin calls follow System V: the single tagged-word argument goes
+ * in rdi, the result comes back in rax. Nothing has to be saved around
+ * one -- spill-everything leaves rax/rcx dead between IR instructions,
+ * so a call may clobber freely. Linear-scan allocation will have to
+ * spill live caller-saved registers here instead.
  */
 
 /* Stack slot of temp t. Slots start below the saved rbp, so t0 is at
@@ -95,12 +101,17 @@ emit_string_literal(FILE *out, const char *s)
 }
 
 static void
-emit_data_section(const struct ir_program *p, FILE *out)
+emit_data_section(const struct ir_program *p, FILE *out, int echo_result)
 {
-    if (p->str_count == 0)
-        return;
-
     fputs("    .data\n", out);
+
+    /* The runtime prints lisp_entry's result only when this is
+     * nonzero, so a compiled program's stdout is exactly what it
+     * writes. Compiler-provided, like lisp_entry itself. */
+    fputs("    .globl lisp_echo_result\n", out);
+    fputs("    .align 8\n", out);
+    fputs("lisp_echo_result:\n", out);
+    fprintf(out, "    .quad %d\n", echo_result ? 1 : 0);
 
     for (size_t i = 0; i < p->str_count; ++i) {
         fputs("    .align 8\n", out);
@@ -205,6 +216,49 @@ emit_instr(const struct ir_instr *instr, FILE *out, int annotate)
             fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
             break;
 
+        /*
+         * Comparisons yield a tagged boolean with no branching. Tagged
+         * integers keep their ordering (n << 2 is monotonic in n), so
+         * the operands are compared as they sit, signed. The result
+         * comes straight out of the flags because t and nil differ in
+         * exactly one bit:
+         *
+         *   NIL_WORD = 0b0111    T_WORD = 0b1111
+         *
+         * setcc gives 0 or 1, shifting that into bit 3 gives 0 or 8,
+         * and OR-ing NIL_WORD turns them into nil and t.
+         *
+         * EQ compares whole tagged words, so it is exact for integers
+         * but pointer equality for strings -- it is CL's numeric `=`,
+         * not `equal`.
+         */
+        case IR_OP_LT:
+        case IR_OP_GT:
+        case IR_OP_EQ: {
+            static const char *const setcc[] = {
+                [IR_OP_LT] = "setl",
+                [IR_OP_GT] = "setg",
+                [IR_OP_EQ] = "sete",
+            };
+            static const char *const name[] = {
+                [IR_OP_LT] = "lt",
+                [IR_OP_GT] = "gt",
+                [IR_OP_EQ] = "eq",
+            };
+
+            ir_comment(out, annotate, "t%d = %s t%d, t%d", instr->dst,
+                    name[instr->op], instr->src1, instr->src2);
+
+            fprintf(out, "    mov rax, [rbp%ld]\n", slot(instr->src1));
+            fprintf(out, "    cmp rax, [rbp%ld]\n", slot(instr->src2));
+            fprintf(out, "    %s al\n", setcc[instr->op]);
+            fputs("    movzx eax, al\n", out);
+            fputs("    shl rax, 3\n", out);
+            fprintf(out, "    or rax, %ld\n", (long)NIL_WORD);
+            fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
+            break;
+        }
+
         case IR_OP_JMP:
             fprintf(out, "    jmp .L%ld\n", (long)instr->imm);
             break;
@@ -225,9 +279,29 @@ emit_instr(const struct ir_instr *instr, FILE *out, int annotate)
             emit_return(out, instr->src1);
             break;
 
-        case IR_OP_CALL_BUILTIN:
+        case IR_OP_CALL_BUILTIN: {
+            const char *sym = ir_builtin_symbol((enum ir_builtin)instr->imm);
+            assert(sym != NULL && "codegen: unknown builtin id");
+
+            if (instr->src1 != IR_NONE)
+                ir_comment(out, annotate, "call_builtin %s, t%d", sym, instr->src1);
+            else
+                ir_comment(out, annotate, "call_builtin %s", sym);
+
+            if (instr->src1 != IR_NONE)
+                fprintf(out, "    mov rdi, [rbp%ld]\n", slot(instr->src1));
+
+            fprintf(out, "    call %s\n", sym);
+
+            /* The writers return nothing; the store is here so a
+             * value-returning builtin needs no new lowering. */
+            if (instr->dst != IR_NONE)
+                fprintf(out, "    mov [rbp%ld], rax\n", slot(instr->dst));
+            break;
+        }
+
         case IR_OP_CALL:
-            assert(0 && "codegen: CALL ops not lowered yet (translator never emits them)");
+            assert(0 && "codegen: CALL not lowered yet (translator never emits it)");
             break;
 
         default:
@@ -237,18 +311,21 @@ emit_instr(const struct ir_instr *instr, FILE *out, int annotate)
 }
 
 int
-codegen_emit(const struct ir_program *p, FILE *out, int annotate)
+codegen_emit(const struct ir_program *p, FILE *out, int annotate, int echo_result)
 {
     if (p == NULL || out == NULL)
         return -1;
 
-    /* One slot per temp; keep rsp 16-aligned (it is on function entry
-     * after `push rbp`, and future CALL lowering will rely on it). */
+    /* One slot per temp, rounded to keep rsp 16-aligned. Builtin calls
+     * depend on this: rsp is 8 (mod 16) on entry, `push rbp` makes it
+     * 0, and a 16-multiple `sub` keeps it 0 -- which is what System V
+     * requires at a call site. With no temps no `sub` is emitted and
+     * it is still 0. */
     long frame = (8L * p->temp_count + 15L) & ~15L;
 
     fputs("    .intel_syntax noprefix\n\n", out);
 
-    emit_data_section(p, out);
+    emit_data_section(p, out, echo_result);
 
     fputs("    .text\n", out);
     fputs("    .globl lisp_entry\n", out);

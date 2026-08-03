@@ -1,5 +1,6 @@
 *.o
 *.s
+*.out
 vgcore.*
 a.out
 lispc

@@ -20,6 +20,7 @@ OBJECTS = \
 	$(BUILD_DIR)/compiler/ast.o \
 	$(BUILD_DIR)/compiler/hashmap.o \
 	$(BUILD_DIR)/compiler/builtin_hash.o \
+	$(BUILD_DIR)/compiler/format_spec.o \
 	$(BUILD_DIR)/compiler/semantic.o \
 	$(BUILD_DIR)/compiler/ir.o \
 	$(BUILD_DIR)/compiler/codegen.o \

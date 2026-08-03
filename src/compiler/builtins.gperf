@@ -12,6 +12,9 @@
 -,        BUILTIN_MINUS
 *,        BUILTIN_MUL
 /,        BUILTIN_DIV
+<,        BUILTIN_LT
+>,        BUILTIN_GT
+=,        BUILTIN_NUM_EQ
 if,       BUILTIN_IF
 let,      BUILTIN_LET
 quote,    BUILTIN_QUOTE

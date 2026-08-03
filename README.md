@@ -58,8 +58,10 @@ Working today:
   unary negation/reciprocal)
 - `let` bindings, including shadowing and nested scopes
 - `if`, one- and two-armed, arbitrarily nested (only `nil` is false)
+- Comparison predicates `< > =`, n-ary as in Common Lisp (`(< 1 2 3)`)
+- `format` to `t` with the `~a ~d ~% ~~` directives
 
-Not yet: `format`, comparison predicates, `defun`/`lambda`, quote, lists.
+Not yet: `cond`, `defun`/`lambda`, quote, lists, `setq`.
 Unsupported forms are rejected with source-located diagnostics rather than
 miscompiled.
 
@@ -101,8 +103,8 @@ allocation strategy.
 - [x] Driver produces executables directly (`-o`)
 - [x] Freestanding runtime — no libc; programs assemble and link with
       plain `as` + `ld`
-- [ ] `format` and the builtin calling convention
-- [ ] Comparison predicates `< > =`
+- [x] `format` and the builtin calling convention
+- [x] Comparison predicates `< > =`
 - [ ] Constant folding (AST → AST pass)
 - [ ] Functions: `defun`, `lambda`, recursion
 - [ ] Linear-scan register allocation
